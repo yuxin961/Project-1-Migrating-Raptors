@@ -1,0 +1,590 @@
+---
+title: "Project 1 Migrating Raptors"
+author: "Yuxin Shan"
+date: "2020/6/8"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+Install and read the packages we need
+```{r}
+library(glmmTMB)
+library(ggplot2)
+library(mgcv)
+library(data.table)
+library(VIM)
+
+
+```
+## Read the data and Exploratory data analysis
+
+```{r}
+#read the data
+rap <- read.csv("HMworkingdatav2.csv", header = T, sep = ",")
+rap.data <- rap[,1:46]
+rap.data2 <- data.table(rap.data)
+#check the NA's
+na.count2 <- NULL
+for(i in 1:46){
+  na.count2[i] <- length(which(is.na(rap.data[,i]))) 
+}
+na.count2
+## deal with the NA's
+
+for(i in 1:length(rap.data$UR)){
+  if(rap.data$Humidity[i] == 0){
+    rap.data$Humidity[i] = NA
+  }
+  if(rap.data$BARO[i] == 0){
+    rap.data$BARO[i] = NA
+  }
+}
+library(VIM)
+aggr(rap.data)
+rap.data01 <- rap.data[,1:46]
+
+par(mfrow=c(2,2))
+hist(rap.data2$TOTAL,xlab = "Total number of raptors",main = "Histogram of total number of raptors");
+hist(rap.data2$BW,xlab = "Total number of Broad-winged hawk",main = "Histogram of number of Broad-winged hawk");
+hist(rap.data2$SS,xlab = "Total number of Sharp-shinned hawk",main = "Histogram of number of Sharp-shinned hawk");
+hist(rap.data2$RT,xlab = "Total number of Red-tailed hawk",main = "Histogram of number of Red-tailed hawk")
+```
+
+### data processing
+```{r}
+#BARO 
+hist(rap.data2$BARO)
+length(which(rap.data2$BARO == 0)) ##57 missing value
+BARO <- lm(BARO ~ Month, data = rap.data2)
+predict.BARO <- predict(BARO, newdata = rap.data2)
+rap.data2$BARO <- ifelse(rap.data2$BARO == 0, predict.BARO, rap.data2$BARO )
+
+#Visibility
+### 60 zeros in visibility
+#Visibility of less than 100 metres (330 ft) is usually reported as zero
+#thus there is no missing value
+
+# wind direction has 8 missing value
+#treat them as a new lable
+
+##temperature  good data
+hist(rap.data2$Temp)
+
+#Humdity 0 is missing value
+hist(rap.data2$Humidity)
+#impute the missing data
+hum.data <- rap.data2[which(rap.data2$Humidity != 0),]
+humd <- lm(Humidity ~ Month, data = hum.data)
+pred.humd <- predict(humd, newdata <- rap.data2)
+rap.data2$Humidity <- ifelse(rap.data2$Humidity == 0, pred.humd, rap.data2$Humidity)
+length(which(rap.data2$Humidity == 0 ))
+
+#cloud cover #change the outliers
+index.cloud <- which(rap.data$Cloud.Cover > 100)
+rap.data2$Cloud.Cover[index.cloud] <- 100
+
+#humidity #change the outliers
+index.humi <- which(rap.data$Humidity > 100)
+rap.data2$Humidity[index.humi] <- 100
+#Visitibily
+
+rap.data2$Visibility[which(rap.data$Visibility == "1/2")] <- 50
+rap.data2$Visibility <- as.numeric(as.character(rap.data2$Visibility))
+rap.data2$Visibility[224] <- 25
+hist(rap.data2$Visibility)
+#xianzhu
+plot(x = rap.data2$Precipitation2, y = rap.data2$Visibility)
+vis.fit <- lm(Visibility ~ Precipitation2, data = rap.data2)
+abline(vis.fit, lwd = 3)
+
+pred.vis <- predict(vis.fit, newdata <- rap.data2)
+rap.data2$Visibility <- ifelse(is.na(rap.data2$Visibility), pred.vis,
+                               rap.data2$Visibility)
+length(which(is.na(rap.data2$Visibility)))
+############boxplot
+plot(x = rap.data2$Month, y = rap.data2$Humidity)
+plot(x = rap.data2$Month, y = rap.data2$BARO)
+plot(x = rap.data2$Month, y = rap.data2$Temp)
+### precipitations zhijieshanleba
+cor(rap.data2$Visibility,rap.data2$Precipitation2,use = "complete.obs")
+
+###flight direction
+boxplot(rap.data2$Month ~ rap.data2$Flight.DIR)
+#consider the flight direction
+levels(rap.data2$Flight.DIR)[levels(rap.data2$Flight.DIR) %in% c("N","NNE")] <- "North"
+levels(rap.data2$Flight.DIR)[levels(rap.data2$Flight.DIR) %in% 
+                               c("S","SE","SSW","SW","W")] <- "South"
+#1,5,6,7 no birds
+boxplot(rap.data2$TOTAL ~ rap.data2$Month)
+
+zero.total <- rap.data2[which(rap.data2$TOTAL == 0),]
+length(which(is.na(zero.total$Flight.DIR)))# 541 missing values are related to zero birds count
+length(which(rap.data2$Flight.DIR == "North"))#279
+length(which(rap.data2$Flight.DIR == "South"))#445 NA:595
+flight.dir <- NULL
+for(i in 1:length(rap.data2$Flight.DIR)){
+  if ((rap.data2$Month[i] >= 2) & (rap.data2$Month[i] <= 4)){
+    flight.dir[i] = "North"
+  }
+  else if((rap.data2$Month[i] >= 7) & (rap.data2$Month[i] <= 12)){
+    flight.dir[i] = "South"
+  }
+  else{
+    flight.dir[i] = "Unknown"
+  }
+}
+flight.dir <- as.factor(flight.dir)
+rap.data2$Flight.DIR <- flight.dir
+
+#wind direction 8 missing value delete them
+head(rap.data2$Wind.Dir)
+levels(rap.data2$Wind.Dir)
+
+levels(rap.data2$Wind.Dir)[levels(rap.data2$Wind.Dir) %in% c("E","ENE","ESE")] <- "East"
+levels(rap.data2$Wind.Dir)[levels(rap.data2$Wind.Dir) %in% c("N","NE","NNW","NW")] <- "North"
+levels(rap.data2$Wind.Dir)[levels(rap.data2$Wind.Dir) %in% c("S","SE","SSE","SSW","SW")] <- "South"
+levels(rap.data2$Wind.Dir)[levels(rap.data2$Wind.Dir) %in% c("W","WNW","WSW")] <- "West"
+
+# levels(rap.data2$Wind.Dir)[levels(rap.data2$Wind.Dir) %in% c("South","SSW","SW")] <- "South"
+
+#observer effect
+observer <- NULL
+k = 1
+for(i in 43:46){
+  for(j in 1:length(rap.data$Date)){
+    if(!(rap.data[j,i] %in% observer)){
+      observer[k] = rap.data[j,i]
+      k = k + 1
+    }
+  }
+}
+observer <- observer[-2]
+count.observer <- as.integer(rep(0,length(observer)))
+
+for(i in 43:46){
+  for(j in 1:length(rap.data$Date)){
+    for(k in 1:length(observer)){
+      if(is.na(rap.data[j,i])){}
+      else if(rap.data[j,i] == observer[k]){
+        count.observer[k] = count.observer[k] + 1
+      }
+      
+
+    }
+  }
+}
+##### observer effect : observer id = 4
+# a new factor
+obs <- NULL
+for(i in 43:46){
+  for(j in 1:length(rap.data$Date)){
+    if(is.na(rap.data[j,i])) {
+    
+    }
+    else if(rap.data[j,i] == 4){
+      obs[j] = 1
+    }
+  }
+}
+
+for(i in 1:1319){
+  if(i %in% which(is.na(obs))){
+    obs[i] = 0
+  }
+}
+obs <- as.factor(obs)
+rap.data2$Counter <- obs
+
+rap.data2 <- rap.data2[is.na(Precipitation) == FALSE]
+rap.data2 <- rap.data2[is.na(Wind.Dir) == FALSE]
+rap.data2 <- rap.data2[Wind.Dir != ""]
+rap.data2 <- rap.data2[Wind.Dir != "Variable"]
+levels(rap.data2$Wind.Dir)[levels(rap.data2$Wind.Dir) %in% c("South","","Variable")] <- "South"
+levels(rap.data2$Precipitation)[levels(rap.data2$Precipitation) %in% c("Thunderstorm","","Snow")] <- "Snow"
+#impute the missing data
+
+t <- lm(rap.data2$Visibility ~ rap.data2$Humidity)
+summary(t)
+vis.data <- rap.data2[which(rap.data2$Visibility != 0),]
+
+pred.vis <- predict(t, newdata <- rap.data2)
+rap.data2$Visibility <- ifelse(rap.data2$Visibility == 0, pred.vis, rap.data2$Visibility)
+length(which(rap.data2$Visibility == 0 ))
+```
+
+
+```{r}
+########poisson distribution
+
+fit00 <- gam(TOTAL ~  Temp + factor(Wind.Dir) + Humidity + Visibility  + factor(Precipitation) + Flight.DIR + offset(Duration) +
+                s(Counter, bs = "re") , 
+              data = rap.data2 , family = poisson, method = "REML")
+summary(fit00)
+
+b <- fit00
+par(mfrow=c(2,2))
+plot(predict(b,type="response"),residuals(b), main="a")
+plot(predict(b,type="response"),b$y, main="b");abline(0,1,col=2)
+plot(b$linear.predictors,b$y, main="c")
+qq.gam(b,rep=20,level=1, main="d")
+
+nzeros<-numeric()
+b<-fit00
+for (i in 1:100){
+  simcounts<-rpois(n=length(b$residuals),lambda=predict(b,type="response")) # simulate from poisson distribution using fitted values
+  nzeros<-c(nzeros, sum(simcounts==0))
+}
+hist(nzeros); mean(nzeros); sum(rap.data2$TOTAL==0)
+abline(v=sum(rap.data2$TOTAL),col=2)
+
+################### zero-inflation 
+
+fit000 <- gam(TOTAL ~  Temp + Humidity + Visibility  + factor(Precipitation) + Flight.DIR + offset(Duration) +
+                s(Counter, bs = "re") , 
+              data = rap.data2 , family = poisson, method = "REML")
+#summary(fit000)
+
+a <- fit000
+par(mfrow=c(2,2))
+plot(predict(a,type="response"),residuals(a), main="a")
+plot(predict(a,type="response"),a$y, main="b");abline(0,1,col=2)
+plot(a$linear.predictors,a$y, main="c")
+qq.gam(a,rep=20,level=1, main="d")
+
+nzeros<-numeric()
+a<-fit00
+for (i in 1:100){
+  simcounts<-rpois(n=length(a$residuals),lambda=predict(a,type="response")) # simulate from poisson distribution using fitted values
+  nzeros<-c(nzeros, sum(simcounts==0))
+}
+hist(nzeros); mean(nzeros); sum(rap.data2$TOTAL==0)
+abline(v=sum(rap.data2$TOTAL),col=2)
+
+#############################
+
+#fit the nb glmms
+fit3 <- gam(TOTAL ~ factor(Wind.Spd) + Temp + factor(Wind.Dir) + Humidity + Visibility + BARO  + Flight.DIR + offset(Duration) + Cloud.Cover + factor(Precipitation) +
+                s(Counter, bs = "re") , 
+              data = rap.data2 , family = nb, method = "REML")
+summary(fit3)
+#check the data
+c <- fit3
+par(mfrow=c(2,2))
+plot(predict(c,type="response"),residuals(c), main="a")
+plot(predict(c,type="response"),c$y, main="b");abline(0,1,col=2)
+qq.gam(c,rep=20,level=1, main="d")
+
+thb <- c$family$getTheta(TRUE) ## extract final theta estimate
+nzeros<-numeric()
+for (i in 1:100){
+  simcounts<-rnbinom(size=thb, n=length(c$residuals),mu=predict(c,type="response")) 
+  nzeros<-c(nzeros, sum(simcounts==0))
+}
+hist(nzeros); mean(nzeros);sum(rap.data2$TOTAL==0)
+
+par(mfrow=c(3,2))
+plot(predict(a,type="response"),residuals(a), main="Poisson")
+qq.gam(a,rep=20,level=1, main="Poisson")
+plot(predict(b,type="response"),residuals(b), main="Zero-inflated Poisson")
+qq.gam(b,rep=20,level=1, main="Zero-inflated Poisson")
+plot(predict(c,type="response"),residuals(c), main="Negative binomial")
+qq.gam(c,rep=20,level=1, main="Negative binomial")
+
+```
+
+
+### total model
+
+```{r}
+
+#model with results
+fit03 <- gam(TOTAL ~ Wind.Spd + Temp + Humidity + Visibility + BARO +
+                Precipitation  + s(Wind.Dir, bs = "re")  + s(Flight.DIR, bs = "re") + 
+                s(Counter, bs = "re") + offset(Duration), 
+              data = rap.data2 , family = nb, method = "REML")
+
+fit02 <- gam(TOTAL/Duration ~ Wind.Spd + Temp + Wind.Dir + Humidity + Visibility + 
+    BARO + Precipitation + Flight.DIR + s(Counter, bs = "re"), 
+              data = rap.data2 , family = nb,method = "REML")
+
+fit03 <- gam(TOTAL/Duration ~ Temp + Wind.Dir + Humidity + Visibility + 
+    BARO + Precipitation + Flight.DIR + s(Visibility,Counter, bs = "re"), 
+              data = rap.data2 , family = nb,method = "REML")
+
+fit04 <- gam(TOTAL/Duration ~ Wind.Spd + Temp + Wind.Dir + Humidity + Visibility + 
+    BARO + Precipitation + Flight.DIR + s(Counter, bs = "re"), 
+              data = rap.data2 , family = nb,method = "REML")
+summary(fit04)
+
+
+#from here fit01
+fit00 <- gam(TOTAL ~  Temp + factor(Wind.Dir) + Humidity + Visibility  + factor(Precipitation) + Flight.DIR + offset(Duration) +
+                s(Counter, bs = "re") , 
+              data = rap.data2 , family = poisson, method = "REML")
+summary(fit00)
+
+b <- fit00
+par(mfrow=c(2,2))
+plot(predict(b,type="response"),residuals(b), main="a")
+plot(predict(b,type="response"),b$y, main="b");abline(0,1,col=2)
+plot(b$linear.predictors,b$y, main="c")
+qq.gam(b,rep=20,level=1, main="d")
+
+nzeros<-numeric()
+b<-fit00
+for (i in 1:100){
+  simcounts<-rpois(n=length(b$residuals),lambda=predict(b,type="response")) # simulate from poisson distribution using fitted values
+  nzeros<-c(nzeros, sum(simcounts==0))
+}
+hist(nzeros); mean(nzeros); sum(rap.data2$TOTAL==0)
+abline(v=sum(rap.data2$TOTAL),col=2)
+########################################################
+
+########################################################
+fit01 <- gam(TOTAL/Duration ~ factor(Wind.Spd) + Temp + factor(Wind.Dir) + Humidity + Visibility + BARO +
+                factor(Precipitation)   + Flight.DIR + 
+                s(Counter, bs = "re") , 
+              data = rap.data2 , family = nb, method = "REML")
+summary(fit01)
+fit02 <- gam(TOTAL/Duration ~ Temp + Wind.Dir  + Visibility + Humidity +
+                Precipitation   + factor(Flight.DIR) + 
+                s(Visibility,Counter, bs = "re"), 
+              data = rap.data2 , family = nb, method = "REML")
+summary(fit02)
+fit03 <- gam(TOTAL/Duration ~ Temp + Wind.Dir  + Visibility + Humidity +
+                Precipitation   + factor(Flight.DIR) + 
+                s(Counter, bs = "re"), 
+              data = rap.data2 , family = nb, method = "REML")
+summary(fit03)
+
+fit04 <- gam(TOTAL/Duration ~ Wind.Spd2 + Temp + factor(Wind.Dir) + Humidity + Visibility + BARO +
+                factor(Precipitation)   + Flight.DIR + 
+                s(Counter, bs = "re") , 
+              data = rap.data2 , family = nb, method = "REML")
+summary(fit04)
+
+fit05 <- gam(TOTAL/Duration ~ factor(Wind.Spd) + Temp + factor(Wind.Dir) + Humidity + Visibility + BARO + Cloud.Cover +
+                factor(Precipitation)   + Flight.DIR + 
+                s(Counter, bs = "re") , 
+              data = rap.data2 , family = nb, method = "REML")
+summary(fit05)
+
+fit06 <- gam(TOTAL ~ factor(Wind.Spd) + Temp + factor(Wind.Dir) + Humidity + Visibility + BARO  + Flight.DIR + s(Precipitation, bs = "re") + offset(Duration) + Cloud.Cover + 
+                s(Counter, bs = "re") , 
+              data = rap.data2 , family = nb, method = "REML")
+summary(fit06)
+
+fit07 <- gam(TOTAL ~ factor(Wind.Spd) + Temp + factor(Wind.Dir) + Visibility  + Flight.DIR + offset(Duration)  +  factor(Precipitation) + 
+                s(Counter, bs = "re") , 
+              data = rap.data2 , family = nb, method = "REML")
+summary(fit07)
+
+fit08 <- gam(TOTAL ~ factor(Wind.Spd) + Temp + factor(Wind.Dir) + Humidity + Visibility + BARO  + Flight.DIR + offset(Duration) + Cloud.Cover + factor(Precipitation) +
+                s(Counter, bs = "re") , 
+              data = rap.data2 , family = nb, method = "REML")
+summary(fit08)
+AIC(fit06,fit07,fit08)
+fit09 <- gam(TOTAL ~ factor(Wind.Spd) + Temp + factor(Wind.Dir) + Humidity + Visibility + BARO  + Flight.DIR + offset(Duration) + Cloud.Cover + factor(Precipitation) +
+                s(Visibility,Counter, bs = "re") , 
+              data = rap.data2 , family = nb, method = "REML")
+summary(fit09)
+AIC(fit06,fit07,fit08,fit09)
+######
+a <- fit06
+par(mfrow=c(2,2))
+plot(predict(a,type="response"),residuals(a), main="a")
+plot(predict(a,type="response"),a$y, main="b");abline(0,1,col=2)
+plot(a$linear.predictors,a$y, main="c")
+qq.gam(a,rep=20,level=1, main="d")
+
+thb <- a$family$getTheta(TRUE) ## extract final theta estimate
+nzeros<-numeric()
+for (i in 1:100){
+  simcounts<-rnbinom(size=thb, n=length(a$residuals),mu=predict(a,type="response")) 
+  nzeros<-c(nzeros, sum(simcounts==0))
+}
+hist(nzeros); mean(nzeros);sum(rap.data2$TOTAL==0)
+
+##########################################
+fit01 <- gam(TOTAL/Duration ~  Temp + Wind.Dir + Humidity + Visibility  + Flight.DIR + 
+                s(Counter, bs = "re"), 
+              data = rap.data2 , family = nb, method = "REML")
+b <- fit06
+par(mfrow=c(2,2))
+plot(predict(b,type="response"),residuals(b), main="a")
+plot(predict(b,type="response"),b$y, main="b");abline(0,1,col=2)
+plot(b$linear.predictors,b$y, main="c")
+qq.gam(b,rep=20,level=1, main="d")
+
+thb <- b$family$getTheta(TRUE) ## extract final theta estimate
+nzeros<-numeric()
+for (i in 1:100){
+  simcounts<-rnbinom(size=thb, n=length(b$residuals),mu=predict(b,type="response")) 
+  nzeros<-c(nzeros, sum(simcounts==0))
+}
+hist(nzeros); mean(nzeros);sum(rap.data2$TOTAL==0)
+##########################################
+#model with zero inflated effect
+
+b = fit01
+###
+par(mfrow=c(2,2))
+plot(predict(b,type="response"),residuals(b), main="a")
+plot(predict(b,type="response"),b$y, main="b");abline(0,1,col=2)
+plot(b$linear.predictors,b$y, main="c")
+qq.gam(b,rep=20,level=1, main="d")
+
+nzeros<-numeric()
+
+for (i in 1:100){
+  simcounts<-rpois(n=length(b$residuals),lambda=predict(b,type="response")) # simulate from poisson distribution using fitted values
+  nzeros<-c(nzeros, sum(simcounts==0))
+}
+hist(nzeros); mean(nzeros); sum(rap.data2$TOTAL==0)
+```
+##3 keshiihua
+
+```{r}
+#####gujizhi of the glm
+createCoeftab1 <- function(TMB, GAMrange) {
+    bTMB <- fixef(TMB)$cond[-1]
+    seTMB <- diag(vcov(TMB)$cond)[-1]
+    nms <- names(bTMB)
+    nms <- sub("FoodTreatment", "FT", nms)
+    nms <- sub("cArrivalTime", "ArrivalTime", nms)
+    df <- data.frame(model    = rep(c("glmmTMB"), each = length(bTMB)),
+                     term     = rep(nms, 2),
+                     estimate = unname(c(bTMB)))
+    df <- transform(df,
+                    upper = estimate + sqrt(c(seTMB)),
+                    lower = estimate - sqrt(c(seTMB)))
+    df
+}
+
+
+########estimate of gam
+createCoeftab2 <- function(GAM, GAMrange) {
+    bGAM <- coef(GAM)[GAMrange]
+    seGAM <- diag(vcov(GAM))[GAMrange]
+    nms <- names(bGAM)
+    nms <- sub("FoodTreatment", "FT", nms)
+    nms <- sub("cArrivalTime", "ArrivalTime", nms)
+    df <- data.frame(model    = rep(c("mgcv::gam"), each = length(bGAM)),
+                     term     = rep(nms, 2),
+                     estimate = unname(c(bGAM)))
+    df <- transform(df,
+                    upper = estimate + sqrt(c(seGAM)),
+                    lower = estimate - sqrt(c(seGAM)))
+    df
+}
+```
+### 
+
+```{r}
+#check the number of different raptor species
+tt <- NULL
+for(i in 8:28){
+  tt[i] = max(rap.data[,i])
+}
+sss <- NULL
+for(i in 8:28){
+  sss[i] = sum(rap.data[,i])
+}
+### BW:1116 RT:45 SS:67
+```
+### model of different birds
+
+```{r}
+fit1 <- gam(RT/Duration ~ factor(Wind.Spd) + Temp + factor(Wind.Dir) + Humidity + Visibility + BARO +
+                factor(Precipitation)   + Flight.DIR + 
+                s(Counter, bs = "re") , 
+              data = rap.data2 , family = nb, method = "REML")
+summary(fit1)
+fit2 <- gam(BW/Duration ~ Temp + Wind.Dir  + Visibility + Humidity +
+                Precipitation   + factor(Flight.DIR) + 
+                s(Visibility,Counter, bs = "re"), 
+              data = rap.data2 , family = nb, method = "REML")
+summary(fit02)
+fit3 <- gam(BW/Duration ~ Temp + Wind.Dir  + Visibility + Humidity +
+                Precipitation   + factor(Flight.DIR) + 
+                s(Counter, bs = "re"), 
+              data = rap.data2 , family = nb, method = "REML")
+summary(fit3)
+
+fit04 <- gam(TOTAL/Duration ~ Wind.Spd2 + Temp + factor(Wind.Dir) + Humidity + Visibility + BARO +
+                factor(Precipitation)   + Flight.DIR + 
+                s(Counter, bs = "re") , 
+              data = rap.data2 , family = nb, method = "REML")
+summary(fit04)
+
+fit05 <- gam(TOTAL/Duration ~ factor(Wind.Spd) + Temp + factor(Wind.Dir) + Humidity + Visibility + BARO + Cloud.Cover +
+                factor(Precipitation)   + Flight.DIR + 
+                s(Counter, bs = "re") , 
+              data = rap.data2 , family = nb, method = "REML")
+summary(fit05)
+
+fit6 <- gam(BW/Duration ~ factor(Wind.Spd) + Temp + factor(Wind.Dir) + Humidity + Visibility + BARO  + Flight.DIR + s(Precipitation, bs = "re") +
+                s(Counter, bs = "re") , 
+              data = rap.data2 , family = nb, method = "REML")
+summary(fit6)
+
+fit07 <- gam(TOTAL/Duration ~ factor(Wind.Spd) + Temp + factor(Wind.Dir)  + Visibility + BARO  + Flight.DIR + s(Precipitation, bs = "re") + Cloud.Cover + 
+                s(Counter, bs = "re") , 
+              data = rap.data2 , family = nb, method = "REML")
+summary(fit07)
+
+fit08 <- gam(TOTAL/Duration ~ factor(Wind.Spd) + Temp + factor(Wind.Dir) + Humidity + Visibility + BARO  + Flight.DIR + s(Precipitation, bs = "re") +
+                s(Visibility,Counter, bs = "re") , 
+              data = rap.data2 , family = nb, method = "REML")
+summary(fit08)
+
+fit09 <- gam(TOTAL/Duration ~ factor(Wind.Spd) + Temp + Humidity + Visibility + BARO  + Flight.DIR*Wind.Dir + s(Precipitation, bs = "re") +
+                s(Counter, bs = "re") , 
+              data = rap.data2 , family = nb, method = "REML")
+summary(fit09)
+
+```
+
+```{r}
+
+fit7 <- gam(BW ~ factor(Wind.Spd) + Temp + factor(Wind.Dir) + Visibility  + Flight.DIR + offset(Duration)  +  factor(Precipitation) + 
+                s(Counter, bs = "re") , 
+              data = rap.data2 , family = nb, method = "REML")
+summary(fit7)
+
+fit8 <- gam(BW ~ factor(Wind.Spd) + Temp + factor(Wind.Dir) + Humidity + Visibility + BARO  + Flight.DIR + offset(Duration) + Cloud.Cover + factor(Precipitation) +
+                s(Counter, bs = "re") , 
+              data = rap.data2 , family = nb, method = "REML")
+summary(fit8)
+
+fit8 <- gam(BW ~ factor(Wind.Spd) + Temp + factor(Wind.Dir) + Humidity + Visibility   + Flight.DIR + offset(Duration) + Cloud.Cover + factor(Precipitation) +
+                s(Counter, bs = "re") , 
+              data = rap.data2 , family = nb, method = "REML")
+summary(fit8)
+
+fit9 <- gam(BW ~ factor(Wind.Spd) + Temp + factor(Wind.Dir) + Humidity + Visibility + BARO  + Flight.DIR + offset(Duration) + Cloud.Cover + factor(Precipitation) +
+                s(Counter, bs = "re") , 
+              data = rap.data2 , family = nb, method = "REML")
+summary(fit9)
+AIC(fit7,fit8,fit9)
+b <- fit08
+par(mfrow=c(2,2))
+plot(predict(b,type="response"),residuals(b), main="a")
+plot(predict(b,type="response"),b$y, main="b");abline(0,1,col=2)
+qq.gam(b,rep=20,level=1, main="c");
+hist(nzeros,main = "d"); 
+abline(v=sum(rap.data2$BW==0),col=2)
+thb <- b$family$getTheta(TRUE) ## extract final theta estimate
+nzeros<-numeric()
+for (i in 1:100){
+  simcounts<-rnbinom(size=thb, n=length(b$residuals),mu=predict(b,type="response")) 
+  nzeros<-c(nzeros, sum(simcounts==0))
+}
+hist(nzeros); mean(nzeros);sum(rap.data2$BW==0)
+abline(v=sum(rap.data2$BW==0),col=2)
+```
